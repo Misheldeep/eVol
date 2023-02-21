@@ -26,7 +26,7 @@ Adafruit_PCD8544 display = Adafruit_PCD8544(15, 16, 18, 19, 21);
 
 //задаем шаг энкодера, макс./мин. значение поворота
 RotaryEncoder encoder(7, 8);  // пины подключение энкодера (CLK,DT)
-int STEPS = 1;
+int STEPS = 0;
 int POSMIN = 0;
 int POSMAX = 255;
 int lastPos, newPos;
@@ -38,11 +38,10 @@ bool fHP = false;
 bool fSUB = false;
 bool fm2 = false;
 
-char *menu[] = {"TW L","TW R","MID L","MID R","SUB L","SUB R", "HP L","HP R"};
-int offset[10] = {1,0,0,0,2,0,0,0,0,92}; //8-sub 9-vol
-int null_offset[10];
+char *menu[] = {"TW L","TW R","MID L","MID R","SUB L","SUB R", "HP L","HP R", "STEP"};
+int offset[11] = {0,0,0,0,0,0,0,0,0,0,92}; //9-sub; 10-vol; 8-step;
+int null_offset[11];
 
-int ch = 120;
 int mi = 0;
 int li = 0;
 int pi = 0;
@@ -71,8 +70,9 @@ void pressHandler (BfButton *btn, BfButton::press_pattern_t pattern) {
         //не наебем не проживем
         POSMIN = -30;
         POSMAX = 30;
-        encoder.setPosition(pi / STEPS); 
         lastPos = pi;      
+        //encoder.setPosition(pi / STEPS); 
+        encoder.setPosition(pi);
       }
       else if (fmenu && fparam) {
         //Serial.println("out params");
@@ -80,25 +80,29 @@ void pressHandler (BfButton *btn, BfButton::press_pattern_t pattern) {
         EEPROM.put(0, offset);
         //не наебем не проживем
         POSMIN = 0;
-        POSMAX = 7;
-        encoder.setPosition(mi / STEPS); 
+        POSMAX = 8;
         lastPos = mi; 
+        //encoder.setPosition(mi / STEPS); 
+        encoder.setPosition(lastPos);
       }
       else if (!fSUB){
         //Serial.println("go sub");
         //не наебем не проживем
         POSMIN = -20;
         POSMAX = 20;
-        lastPos = offset[8];
-        encoder.setPosition(lastPos / STEPS);
+        lastPos = offset[9];
+        //encoder.setPosition(lastPos / STEPS);
+        encoder.setPosition(lastPos);
         out_sub();
         fSUB = true;
       }
       else if (fSUB){
         EEPROM.put(0, offset);
         POSMIN = 1;
-        POSMAX = 255;        
-        encoder.setPosition(counter / STEPS);
+        POSMAX = 255; 
+        lastPos = counter;      
+        //encoder.setPosition(counter / STEPS);
+        encoder.setPosition(counter);
         out_volume(hpLastState);
         fSUB = false;
       }
@@ -117,9 +121,10 @@ void pressHandler (BfButton *btn, BfButton::press_pattern_t pattern) {
         fmenu = true;
         //не наебем не проживем
         POSMIN = 0;
-        POSMAX = 7;
-        encoder.setPosition(mi / STEPS);
+        POSMAX = 8;
         lastPos = mi;
+        //encoder.setPosition(mi / STEPS);
+        encoder.setPosition(lastPos);
       }
       else {
         fmenu = false;
@@ -130,8 +135,9 @@ void pressHandler (BfButton *btn, BfButton::press_pattern_t pattern) {
         //не наебем не проживем
         POSMIN = 1;
         POSMAX = 255;
-        encoder.setPosition(counter / STEPS);
+        //encoder.setPosition(counter / STEPS);
         lastPos = counter;        
+        encoder.setPosition(lastPos);
         out_volume(hpLastState);
       }      
       break;      
@@ -141,7 +147,7 @@ void pressHandler (BfButton *btn, BfButton::press_pattern_t pattern) {
 void setup()   {
   Serial.begin(9600);
   display.begin();
-  display.setContrast(45);
+  display.setContrast(50);
   display.setTextSize(1);
   display.clearDisplay();
   display.display();
@@ -160,11 +166,11 @@ void setup()   {
 
   // Даем бибилотеке знать, к какому пину мы подключили кнопку
   debouncer.attach(HP);
-  debouncer.interval(5); // Интервал, в течение которого мы не буем получать значения с пина
+  debouncer.interval(50); // Интервал, в течение которого мы не буем получать значения с пина
 
   //get def_volume
   EEPROM.get(0, null_offset);
-  if (memcmp (null_offset, offset, 10) == 0) {
+  if (memcmp (null_offset, offset, 11) == 0) {
     //Serial.println("Области памяти идентичные.");
     EEPROM.get(0, offset);    
   }
@@ -175,59 +181,49 @@ void setup()   {
   }
 
   //чо у нас там за громкость то?
-  counter = offset[9];
+  counter = offset[10];
+  STEPS = offset[8];
   out_volume(hpLastState);
   
   //дефолт для управления крутилкой
   servo.attach(11);    // пин для подключения серво
-  Serial.begin(9600);
-  encoder.setPosition(counter / STEPS);
+  encoder.setPosition(counter); //ну и выствим тек значение громкости
 
 }
 
 void loop() {
-  //Опрашиваем кнопку для хожденя по мукам
-  btn.read();
-
-  //где то тут мы проверили что кто то вставил наушники и нарисовали ему на экран 
-  bool currentStateHP = digitalRead(HP);
-  if (currentStateHP != hpLastState && currentStateHP == 1){
-    out_volume(currentStateHP);
-  }
-  //Это состояние переключателя который рисовал Мишка для ушей
-  debouncer.update();
-  // Получаем значение кнопки
-  int value = debouncer.read();
-  // Теперь мы точно знаем, в каком состоянии находится наша кнопка
-  if ( value == LOW ) {
-    //Serial.println("HP OFF");
-    fHP = false;
-  }
-  else {    
-    //Serial.println("HP ON");
-    fHP = true;
-  } 
-  
   //Крутим вертим всем чем хотим
   //проверяем положение ручки энкодера
   encoder.tick();
-  newPos = encoder.getPosition() * STEPS;
+  newPos = encoder.getPosition();
   if (newPos < POSMIN) { 
-    encoder.setPosition(POSMIN / STEPS); 
+    encoder.setPosition(POSMIN); 
     newPos = POSMIN;
   }
   else if (newPos > POSMAX) { 
-    encoder.setPosition(POSMAX / STEPS); 
+    encoder.setPosition(POSMAX); 
     newPos = POSMAX; 
+  }
+  if (lastPos != newPos && !fmenu && !fparam && !fSUB) {
+    int l = newPos;
+    if (newPos < lastPos) {  
+      newPos -= STEPS;
+      l -= STEPS;
+    }
+    else {
+      newPos += STEPS;
+      l += STEPS;
+    }
+    encoder.setPosition(newPos);
   }
   // если положение изменилось - выводим на монитор
   if (lastPos != newPos) {
-    Serial.println(newPos);
+    //Serial.println(newPos);
     if (newPos < lastPos) {
       if (fmenu && !fparam){
         mi --;
         lastPos = mi;
-        if (mi < 4 && fm2 == true) {
+        if (mi < 5 && fm2 == true) {
           fm2 = false;
           main_menu(mi);
         }
@@ -235,6 +231,8 @@ void loop() {
       }
       else if (fmenu && fparam) {
         pi --;
+        //весело шагаем по просторам volume
+        if (mi == 8 && pi < 0) { pi = 0; }
         lastPos = pi;
         set_param(mi, pi, pShift);
       }
@@ -253,7 +251,7 @@ void loop() {
       if (fmenu && !fparam){
         mi ++;
         lastPos = mi;
-        if (mi > 3 && fm2 == false){
+        if (mi > 4 && fm2 == false){
           fm2 = true;
           main_menu(mi);
         }
@@ -276,13 +274,34 @@ void loop() {
       }      
     }
   }
+  //Опрашиваем кнопку для хожденя по мукам
+  btn.read();
+
+  //где то тут мы проверили что кто то вставил наушники и нарисовали ему на экран 
+  bool currentStateHP = digitalRead(HP);
+  if (currentStateHP != hpLastState && currentStateHP == 1){
+    out_volume(currentStateHP);
+  }
+  //Это состояние переключателя который рисовал Мишка для ушей
+  debouncer.update();
+  // Получаем значение кнопки
+  int value = debouncer.read();
+  // Теперь мы точно знаем, в каком состоянии находится наша кнопка
+  if ( value == LOW ) {
+    //Serial.println("HP OFF");
+    fHP = false;
+  }
+  else {    
+    //Serial.println("HP ON");
+    fHP = true;
+  } 
   //текущее состояние гарнитуры
   hpLastState = currentStateHP; 
 }
 
 void out_volume(int pos)
 {
-  offset[9] = counter;
+  offset[10] = counter;
   display.setCursor(0,25);
   display.setTextColor(BLACK);
   display.fillRect(0, 25, display.width(), 10, 0);
@@ -298,27 +317,30 @@ void out_volume(int pos)
 
 void out_sub()
 {
-  offset[8] = si;
+  offset[9] = si;
   display.setCursor(0, 25);
   display.setTextColor(1);
   display.fillRect(0,25,display.width(),10,0);
   display.print("SUB: ");
-  display.print(String(offset[8]/(float)2,1));
+  display.print(String(si/(float)2,1));
   display.display();
 }
 
 void main_menu(int mi){
   pShift = 0;
-  if (mi < 4) {
+  int k;
+  if (mi < 5) {
     pShift = 0;
+    k = 5;
   }
   else {
-    pShift = 4;
+    pShift = 5;
+    k = 4;
   }
   display.clearDisplay();
   //Миша захотел две страницы
   //for (int i = 0; i < 8; i++){
-  for (int i = 0 + pShift; i < 4 + pShift; i++){
+  for (int i = 0 + pShift; i < k + pShift; i++){
     display.setCursor(0, 0+((i-pShift)*10));
     if (mi == i ) {
       display.setTextColor(0,1);
@@ -328,17 +350,22 @@ void main_menu(int mi){
     }
     display.print(String(menu[i])+":  ");
     display.setCursor(40, 0+((i-pShift)*10));
-    display.println(String(offset[i]/(float)2,1));
+    if (i == 8 ) {
+      display.println(String(offset[i]+1));
+    }
+    else {
+      display.println(String(offset[i]/(float)2,1));      
+    }    
     display.display(); 
   }
 }
 
 void go_menu(int m, bool mf){
-  if (m < 4) {
+  if (m < 5) {
     pShift = 0;
   }
   else {
-    pShift = 4;
+    pShift = 5;
   }
   int p = m;
   if (mf == true) {
@@ -347,7 +374,7 @@ void go_menu(int m, bool mf){
     drawLine(mi,pShift,0,1);
   }
   else {
-    if (m != 3) {
+    if (m != 4) {
       p++;
       drawLine(p,pShift,1,0);
     }
@@ -362,7 +389,13 @@ void drawLine(int pos, int shift, int text, int font) {
   display.print(String(menu[pos])+":  ");
   display.setCursor(40,((pos-shift)*10));
   display.setTextColor(text,font);
-  display.println(String(offset[pos]/(float)2,1)); 
+  if (pos == 8 ) {
+    //шаг для volume захотелось
+    display.println(String(offset[pos]+1)); 
+  }
+  else{
+    display.println(String(offset[pos]/(float)2,1)); 
+  }
   display.display();   
 }
 
@@ -370,13 +403,20 @@ void set_param(int li, int pi, int shift){
   offset[li] = pi;
   display.setCursor(40, ((li-shift)*10)); 
   display.fillRect(40, ((li-shift)*10), display.width(), 10, 0);
-  display.print(String(pi/(float)2,1));
+  if (li == 8 ) {
+    //шаг для volume захотелось
+    display.print(String(pi+1));
+    STEPS = pi;
+  }
+  else {
+    display.print(String(pi/(float)2,1));
+  }
   display.display();
 }
 
 //get dB +31.5/-95.5
 float count_db(){
   float db = 31.5 - (0.5*(255-counter));
-  //Serial.println(String(db));
+  //Serial.println("vol c: "+String(counter));
   return db;
 }
