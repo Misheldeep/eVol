@@ -5,10 +5,6 @@
 #include "BfButton.h"
 #include <EEPROM.h>
 #include <Bounce2.h>
-#include <Encoder.h>
-#include "RotaryEncoder.h"          // библиотека для энкодера
-#include <Servo.h>          // библиотека для сервопривода
-Servo servo;
 
 // Software SPI (slower updates, more flexible pin options):
 // pin 15 - Serial clock out (SCLK)
@@ -21,11 +17,51 @@ Adafruit_PCD8544 display = Adafruit_PCD8544(15, 16, 18, 19, 21);
 #define HP 20 //пустой сейчай и низачто не в ответе
 
 #define btnPin 5 //GPIO #3-Push button on encoder
-#define DT 8 //GPIO #4-DT on encoder (Output B)
-#define CLK 7 //GPIO #5-CLK on encoder (Output A)
+//#define DT 8 //GPIO #4-DT on encoder (Output B)
+//#define CLK 7 //GPIO #5-CLK on encoder (Output A)
 
-//задаем шаг энкодера, макс./мин. значение поворота
-RotaryEncoder encoder(7, 8);  // пины подключение энкодера (CLK,DT)
+#define ENCODER_CLK_PIN 2  //Nano has interrupt on pin 2
+#define ENCODER_DT_PIN 7   // Can be any other digital pin
+#define ENCODER_CLICKS_PER_ROTATION 36
+
+//encoder section
+
+//encoder state vars
+volatile int encoderValue = 0;
+volatile int aPrevious;
+volatile int bPrevious;
+
+
+/* Encoder interrupt routine
+   reads and compares previous and current states
+   execute call-back with bool value indicating CW / CCW
+*/
+
+void readEncoder() {
+  int a = digitalRead(ENCODER_CLK_PIN);
+  int b = digitalRead(ENCODER_DT_PIN);
+  if (a != aPrevious) {                  
+    aPrevious = a;
+    if (b != bPrevious) {
+      bPrevious = b;
+      processEncoderRotation(a == b);
+    }
+  }
+}
+
+// Encoder rotation process routine
+void processEncoderRotation (bool direction) {
+  encoderValue = max(min((encoderValue + (direction ? 1 : -1)), ENCODER_CLICKS_PER_ROTATION), 0);
+  Serial.println(encoderValue);
+  if (direction == true) {
+    Serial.println ("CW");
+  }
+  else {
+    Serial.println("CCW");
+  }
+}
+//end of encoder section
+
 int STEPS = 0;
 int POSMIN = 0;
 int POSMAX = 255;
@@ -72,7 +108,6 @@ void pressHandler (BfButton *btn, BfButton::press_pattern_t pattern) {
         POSMAX = 30;
         lastPos = pi;      
         //encoder.setPosition(pi / STEPS); 
-        encoder.setPosition(pi);
       }
       else if (fmenu && fparam) {
         //Serial.println("out params");
@@ -82,8 +117,6 @@ void pressHandler (BfButton *btn, BfButton::press_pattern_t pattern) {
         POSMIN = 0;
         POSMAX = 8;
         lastPos = mi; 
-        //encoder.setPosition(mi / STEPS); 
-        encoder.setPosition(lastPos);
       }
       else if (!fSUB){
         //Serial.println("go sub");
@@ -92,7 +125,6 @@ void pressHandler (BfButton *btn, BfButton::press_pattern_t pattern) {
         POSMAX = 20;
         lastPos = offset[9];
         //encoder.setPosition(lastPos / STEPS);
-        encoder.setPosition(lastPos);
         out_sub();
         fSUB = true;
       }
@@ -101,8 +133,6 @@ void pressHandler (BfButton *btn, BfButton::press_pattern_t pattern) {
         POSMIN = 1;
         POSMAX = 255; 
         lastPos = counter;      
-        //encoder.setPosition(counter / STEPS);
-        encoder.setPosition(counter);
         out_volume(hpLastState);
         fSUB = false;
       }
@@ -123,8 +153,7 @@ void pressHandler (BfButton *btn, BfButton::press_pattern_t pattern) {
         POSMIN = 0;
         POSMAX = 8;
         lastPos = mi;
-        //encoder.setPosition(mi / STEPS);
-        encoder.setPosition(lastPos);
+
       }
       else {
         fmenu = false;
@@ -137,7 +166,6 @@ void pressHandler (BfButton *btn, BfButton::press_pattern_t pattern) {
         POSMAX = 255;
         //encoder.setPosition(counter / STEPS);
         lastPos = counter;        
-        encoder.setPosition(lastPos);
         out_volume(hpLastState);
       }      
       break;      
@@ -151,10 +179,11 @@ void setup()   {
   display.setTextSize(1);
   display.clearDisplay();
   display.display();
-
-  pinMode(CLK,INPUT_PULLUP);
-  pinMode(DT,INPUT_PULLUP);
   pinMode(btnPin,INPUT_PULLUP);
+  pinMode(ENCODER_CLK_PIN, INPUT_PULLUP);
+  pinMode(ENCODER_DT_PIN, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(ENCODER_CLK_PIN), readEncoder, CHANGE);
+  
    
   //тек состояние гарнитуры 
   hpLastState = digitalRead(HP);
@@ -186,24 +215,17 @@ void setup()   {
   out_volume(hpLastState);
   
   //дефолт для управления крутилкой
-  servo.attach(11);    // пин для подключения серво
-  encoder.setPosition(counter); //ну и выствим тек значение громкости
+
 
 }
 
 void loop() {
-  //Крутим вертим всем чем хотим
-  //проверяем положение ручки энкодера
-  encoder.tick();
-  newPos = encoder.getPosition();
-  if (newPos < POSMIN) { 
-    encoder.setPosition(POSMIN); 
-    newPos = POSMIN;
-  }
-  else if (newPos > POSMAX) { 
-    encoder.setPosition(POSMAX); 
-    newPos = POSMAX; 
-  }
+
+  //encoder state now is accessible via encoderValue
+
+
+  //probably this code need to be refactored after that
+  
   if (lastPos != newPos && !fmenu && !fparam && !fSUB) {
     int l = newPos;
     if (newPos < lastPos) {  
@@ -214,7 +236,6 @@ void loop() {
       newPos += STEPS;
       l += STEPS;
     }
-    encoder.setPosition(newPos);
   }
   // если положение изменилось - выводим на монитор
   if (lastPos != newPos) {
