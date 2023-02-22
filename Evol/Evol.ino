@@ -23,13 +23,14 @@ Adafruit_PCD8544 display = Adafruit_PCD8544(15, 16, 18, 19, 21);
 #define ENCODER_CLK_PIN 2  //Nano has interrupt on pin 2
 #define ENCODER_DT_PIN 7   // Can be any other digital pin
 #define ENCODER_RANGE 36
+#define ENCODER_OFF_STATE 2
 
 //encoder section
 
 //encoder state vars
 volatile int encoderValue = 0;
-volatile int aPrevious;
-volatile int bPrevious;
+volatile int aPrevious = ENCODER_OFF_STATE;
+volatile int bPrevious = ENCODER_OFF_STATE;
 
 
 /* Encoder interrupt routine
@@ -42,9 +43,16 @@ void readEncoder() {
   int b = digitalRead(ENCODER_DT_PIN);
   if (a != aPrevious) {                  
     aPrevious = a;
+
+    if (bPrevious == ENCODER_OFF_STATE) {
+      bPrevious = b;
+      return;
+    }
+
     if (b != bPrevious) {
       bPrevious = b;
       processEncoderRotation(a == b);
+      bPrevious = ENCODER_OFF_STATE;
     }
   }
 }
