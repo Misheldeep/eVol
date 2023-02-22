@@ -22,7 +22,7 @@ Adafruit_PCD8544 display = Adafruit_PCD8544(15, 16, 18, 19, 21);
 
 #define ENCODER_CLK_PIN 2  //Nano has interrupt on pin 2
 #define ENCODER_DT_PIN 7   // Can be any other digital pin
-#define ENCODER_CLICKS_PER_ROTATION 36
+#define ENCODER_RANGE 36
 
 //encoder section
 
@@ -51,7 +51,8 @@ void readEncoder() {
 
 // Encoder rotation process routine
 void processEncoderRotation (bool direction) {
-  encoderValue = max(min((encoderValue + (direction ? 1 : -1)), ENCODER_CLICKS_PER_ROTATION), 0);
+  encoderValue = max(min((encoderValue + (direction ? 1 : -1)), ENCODER_RANGE), 
+0);
   Serial.println(encoderValue);
   if (direction == true) {
     Serial.println ("CW");
