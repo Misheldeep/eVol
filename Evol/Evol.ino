@@ -32,6 +32,8 @@ volatile int aCurrVal;
 volatile bool fdir;
 volatile int STEPS = 0;
 
+int encoderPreviousVal = 0;
+
 volatile bool fmenu = false;
 volatile bool fmenu_i = false;
 volatile bool fparam = false;
@@ -135,14 +137,7 @@ void readEncoder() {
 }  
 
 void processEncoderRotation (bool direction) {
-  //encoderValue = max(min((encoderValue + (direction ? 1 : -1)), ENCODER_RANGE), 0);
   encoderValue = encoderValue + (direction ? 1 : -1);
-  if (direction == true) {
-    fdir =  true;
-  }
-  else {
-    fdir =  false;
-  }
 }
 
 void setup()   {
@@ -197,10 +192,12 @@ void setup()   {
 void loop() {
   //Крутим вертим всем чем хотим
   //проверяем положение ручки энкодера
+  
 
   if (encoderValue != aCurrVal) {
+    encoderPreviousVal = aCurrVal;
     aCurrVal = encoderValue;
-    if (fdir) {
+    if (encoderPreviousVal < encoderValue) {
       if (fmenu && !fparam){
         if (encoderValue > 8) {encoderValue=8;}
         mi = encoderValue;
