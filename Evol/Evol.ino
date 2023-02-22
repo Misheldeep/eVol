@@ -5,10 +5,6 @@
 #include "BfButton.h"
 #include <EEPROM.h>
 #include <Bounce2.h>
-#include <Encoder.h>
-#include "RotaryEncoder.h"          // библиотека для энкодера
-#include <Servo.h>          // библиотека для сервопривода
-Servo servo;
 
 // Software SPI (slower updates, more flexible pin options):
 // pin 15 - Serial clock out (SCLK)
@@ -21,35 +17,40 @@ Adafruit_PCD8544 display = Adafruit_PCD8544(15, 16, 18, 19, 21);
 #define HP 20 //пустой сейчай и низачто не в ответе
 
 #define btnPin 5 //GPIO #3-Push button on encoder
-#define DT 8 //GPIO #4-DT on encoder (Output B)
-#define CLK 7 //GPIO #5-CLK on encoder (Output A)
+//#define DT 8 //GPIO #4-DT on encoder (Output B)
+//#define CLK 7 //GPIO #5-CLK on encoder (Output A)
+#define ENCODER_CLK_PIN 2  //Nano has interrupt on pin 2
+#define ENCODER_DT_PIN 3   // Can be any other digital pin
+#define ENCODER_RANGE 255
+#define ENCODER_OFF_STATE 2
 
-//задаем шаг энкодера, макс./мин. значение поворота
-RotaryEncoder encoder(7, 8);  // пины подключение энкодера (CLK,DT)
-int STEPS = 0;
-int POSMIN = 0;
-int POSMAX = 255;
-int lastPos, newPos;
+//encoder state vars
+volatile int encoderValue = 0;
+volatile int aPrevious = ENCODER_OFF_STATE;
+volatile int bPrevious = ENCODER_OFF_STATE;
+volatile int aCurrVal;
+volatile bool fdir;
+volatile int STEPS = 0;
 
-bool fmenu = false;
-bool fmenu_i = false;
-bool fparam = false;
-bool fHP = false;
-bool fSUB = false;
-bool fm2 = false;
+volatile bool fmenu = false;
+volatile bool fmenu_i = false;
+volatile bool fparam = false;
+volatile bool fHP = false;
+volatile bool fSUB = false;
+volatile bool fm2 = false;
 
 char *menu[] = {"TW L","TW R","MID L","MID R","SUB L","SUB R", "HP L","HP R", "STEP"};
 int offset[11] = {0,0,0,0,0,0,0,0,0,0,92}; //9-sub; 10-vol; 8-step;
 int null_offset[11];
 
-int mi = 0;
-int li = 0;
-int pi = 0;
-int si = 0;
-int counter = 0;
-int hpLastState;
-int currentStateHP;
-int pShift;
+volatile int mi = 0;
+volatile int li = 0;
+volatile int pi = 0;
+volatile int si = 0;
+volatile int counter = 0;
+volatile int hpLastState;
+volatile int currentStateHP;
+volatile int pShift;
 
 unsigned long lastButtonPress = 0;  
 
@@ -67,44 +68,26 @@ void pressHandler (BfButton *btn, BfButton::press_pattern_t pattern) {
         //Serial.println("in params");
         fparam = true;
         pi = offset[mi];
-        //не наебем не проживем
-        POSMIN = -30;
-        POSMAX = 30;
-        lastPos = pi;      
-        //encoder.setPosition(pi / STEPS); 
-        encoder.setPosition(pi);
+        encoderValue = pi;
       }
       else if (fmenu && fparam) {
         //Serial.println("out params");
         fparam = false;
         EEPROM.put(0, offset);
-        //не наебем не проживем
-        POSMIN = 0;
-        POSMAX = 8;
-        lastPos = mi; 
-        //encoder.setPosition(mi / STEPS); 
-        encoder.setPosition(lastPos);
+        encoderValue = mi;
       }
       else if (!fSUB){
         //Serial.println("go sub");
-        //не наебем не проживем
-        POSMIN = -20;
-        POSMAX = 20;
-        lastPos = offset[9];
-        //encoder.setPosition(lastPos / STEPS);
-        encoder.setPosition(lastPos);
-        out_sub();
         fSUB = true;
+        encoderValue = offset[9];
+        out_sub();
       }
       else if (fSUB){
+        //Serial.println("out sub");
         EEPROM.put(0, offset);
-        POSMIN = 1;
-        POSMAX = 255; 
-        lastPos = counter;      
-        //encoder.setPosition(counter / STEPS);
-        encoder.setPosition(counter);
-        out_volume(hpLastState);
         fSUB = false;
+        encoderValue = counter;
+        out_volume(hpLastState);
       }
       break;
       
@@ -117,30 +100,48 @@ void pressHandler (BfButton *btn, BfButton::press_pattern_t pattern) {
       //Serial.println("Long push");
       if (!fmenu) {
         //Serial.println("in main menu");
-        main_menu(mi);
         fmenu = true;
-        //не наебем не проживем
-        POSMIN = 0;
-        POSMAX = 8;
-        lastPos = mi;
-        //encoder.setPosition(mi / STEPS);
-        encoder.setPosition(lastPos);
+        encoderValue = mi;
+        main_menu(mi);
       }
       else {
+        EEPROM.put(0, offset);
         fmenu = false;
         fparam = false;
-        EEPROM.put(0, offset);
         display.clearDisplay();
         display.display();
-        //не наебем не проживем
-        POSMIN = 1;
-        POSMAX = 255;
-        //encoder.setPosition(counter / STEPS);
-        lastPos = counter;        
-        encoder.setPosition(lastPos);
+        encoderValue = counter;
         out_volume(hpLastState);
       }      
       break;      
+  }
+}
+
+void readEncoder() {
+  int a = digitalRead(ENCODER_CLK_PIN);
+  int b = digitalRead(ENCODER_DT_PIN);
+  if (a != aPrevious) {                  
+    aPrevious = a;
+    if (bPrevious == ENCODER_OFF_STATE) {
+      bPrevious = b;
+      return;
+    }
+    if (b != bPrevious) {
+      bPrevious = b;
+      processEncoderRotation(a == b);
+      bPrevious = ENCODER_OFF_STATE;
+    }
+  }
+}  
+
+void processEncoderRotation (bool direction) {
+  //encoderValue = max(min((encoderValue + (direction ? 1 : -1)), ENCODER_RANGE), 0);
+  encoderValue = encoderValue + (direction ? 1 : -1);
+  if (direction == true) {
+    fdir =  true;
+  }
+  else {
+    fdir =  false;
   }
 }
 
@@ -152,8 +153,12 @@ void setup()   {
   display.clearDisplay();
   display.display();
 
-  pinMode(CLK,INPUT_PULLUP);
-  pinMode(DT,INPUT_PULLUP);
+  //pinMode(CLK,INPUT_PULLUP);
+  //pinMode(DT,INPUT_PULLUP);
+  pinMode(ENCODER_CLK_PIN, INPUT_PULLUP);
+  pinMode(ENCODER_DT_PIN, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(ENCODER_CLK_PIN), readEncoder, CHANGE);
+  
   pinMode(btnPin,INPUT_PULLUP);
    
   //тек состояние гарнитуры 
@@ -184,73 +189,21 @@ void setup()   {
   counter = offset[10];
   STEPS = offset[8];
   out_volume(hpLastState);
-  
-  //дефолт для управления крутилкой
-  servo.attach(11);    // пин для подключения серво
-  encoder.setPosition(counter); //ну и выствим тек значение громкости
+  encoderValue = counter;
+  aCurrVal = counter;
 
 }
 
 void loop() {
   //Крутим вертим всем чем хотим
   //проверяем положение ручки энкодера
-  encoder.tick();
-  newPos = encoder.getPosition();
-  if (newPos < POSMIN) { 
-    encoder.setPosition(POSMIN); 
-    newPos = POSMIN;
-  }
-  else if (newPos > POSMAX) { 
-    encoder.setPosition(POSMAX); 
-    newPos = POSMAX; 
-  }
-  if (lastPos != newPos && !fmenu && !fparam && !fSUB) {
-    int l = newPos;
-    if (newPos < lastPos) {  
-      newPos -= STEPS;
-      l -= STEPS;
-    }
-    else {
-      newPos += STEPS;
-      l += STEPS;
-    }
-    encoder.setPosition(newPos);
-  }
-  // если положение изменилось - выводим на монитор
-  if (lastPos != newPos) {
-    //Serial.println(newPos);
-    if (newPos < lastPos) {
+
+  if (encoderValue != aCurrVal) {
+    aCurrVal = encoderValue;
+    if (fdir) {
       if (fmenu && !fparam){
-        mi --;
-        lastPos = mi;
-        if (mi < 5 && fm2 == true) {
-          fm2 = false;
-          main_menu(mi);
-        }
-        go_menu(mi, false);
-      }
-      else if (fmenu && fparam) {
-        pi --;
-        //весело шагаем по просторам volume
-        if (mi == 8 && pi < 0) { pi = 0; }
-        lastPos = pi;
-        set_param(mi, pi, pShift);
-      }
-      else if (fSUB) {
-        si --;
-        lastPos = si;
-        out_sub();
-      }      
-      else {
-        counter = newPos;
-        out_volume(hpLastState);    
-        lastPos = counter;
-      }
-    }
-    else {
-      if (fmenu && !fparam){
-        mi ++;
-        lastPos = mi;
+        if (encoderValue > 8) {encoderValue=8;}
+        mi = encoderValue;
         if (mi > 4 && fm2 == false){
           fm2 = true;
           main_menu(mi);
@@ -258,28 +211,52 @@ void loop() {
         go_menu(mi, true);
       }
       else if (fmenu && fparam) {
-        pi ++;
-        lastPos = pi;
+        pi = encoderValue;        
         set_param(mi, pi, pShift);
       }
       else if (fSUB) {
-        si ++;
-        lastPos = si;
+        si = encoderValue; 
         out_sub();
       }
       else {
-        counter = newPos;
-        lastPos = counter;
+        counter = encoderValue+STEPS;
         out_volume(hpLastState);    
-      }      
+      } 
     }
+    else {
+      if (fmenu && !fparam){
+        if (encoderValue < 0) {encoderValue=0;}
+        mi = encoderValue;
+        if (mi < 5 && fm2 == true) {
+          fm2 = false;
+          main_menu(mi);
+        }
+        go_menu(mi, false);
+      }
+      else if (fmenu && fparam) {
+        pi = encoderValue;
+        //весело шагаем по просторам volume
+        if (mi == 8 && pi < 0) { pi = 0; }
+        set_param(mi, pi, pShift);
+      }
+      else if (fSUB) {
+        si = encoderValue;
+        out_sub();
+      }      
+      else {
+        counter = encoderValue-STEPS;
+        out_volume(hpLastState);    
+      }
+    }    
   }
+  
   //Опрашиваем кнопку для хожденя по мукам
   btn.read();
 
   //где то тут мы проверили что кто то вставил наушники и нарисовали ему на экран 
   bool currentStateHP = digitalRead(HP);
   if (currentStateHP != hpLastState && currentStateHP == 1){
+    hpLastState = currentStateHP; 
     out_volume(currentStateHP);
   }
   //Это состояние переключателя который рисовал Мишка для ушей
@@ -295,8 +272,6 @@ void loop() {
     //Serial.println("HP ON");
     fHP = true;
   } 
-  //текущее состояние гарнитуры
-  hpLastState = currentStateHP; 
 }
 
 void out_volume(int pos)
@@ -396,7 +371,8 @@ void drawLine(int pos, int shift, int text, int font) {
   else{
     display.println(String(offset[pos]/(float)2,1)); 
   }
-  display.display();   
+  display.display();
+  delay(30);
 }
 
 void set_param(int li, int pi, int shift){
@@ -417,6 +393,5 @@ void set_param(int li, int pi, int shift){
 //get dB +31.5/-95.5
 float count_db(){
   float db = 31.5 - (0.5*(255-counter));
-  //Serial.println("vol c: "+String(counter));
   return db;
 }
