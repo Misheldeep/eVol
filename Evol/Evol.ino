@@ -40,6 +40,13 @@ unsigned long btime;
 int MenuLength;
 volatile int address;
 
+const float rotaryAccelerationCoef = 500;
+volatile bool lastMovementDirection,currentDirection = false;
+unsigned long lastMovementAt;
+unsigned long accelerationLongCutoffMillis = 200;
+unsigned long accelerationShortCutffMillis = 35;    
+
+
 
 /*
 init display
@@ -97,7 +104,7 @@ void setup() {
   display.setContrast (15);  //should be defined
   display.enableUTF8Print();
   Serial.begin(9600);
-  EEPROM.begin();
+  //EEPROM.begin();
   
   if (EEPROM.read(INIT_ADDR) != INIT_KEY) {
     EEPROM.write(INIT_ADDR, INIT_KEY);
@@ -127,22 +134,24 @@ void setup() {
 void loop() {
   btn.read();  
   if (encoder_value != encoder_previous_value) {
-    int step;
-    if (encoder_previous_value < encoder_value) {
-      step = (evolParams.evolMenu[MenuLength-1].value-1);
-    }
-    else {
-      step = (evolParams.evolMenu[MenuLength-1].value-1) * -1;
-    }
-    //Serial.println(step);
+    if (encoder_previous_value < encoder_value) { currentDirection = 1; } else { currentDirection = 0; } //need for speed/step func
     encoder_previous_value = encoder_value;
     //sendVolumeToEvol(evol_volume_values, 16);
     if (!fmenu && !fSUB) {
       fvol = true;
-      encoder_value = max(min(encoder_value + step, POSITIVE_ENCODER_LIMIT), NEGATIVE_ENCODER_LIMIT);
+      if (evolParams.evolMenu[MenuLength-1].value > 0) {
+        Serial.println("step");
+        rotaryStep();
+      }
+      else {
+        if (lastMovementDirection == currentDirection) {  
+          rotatySpeed();
+          Serial.println("speed");
+        }
+      }    
+      lastMovementAt = millis();
+      lastMovementDirection = currentDirection; 
       encoder_previous_value = encoder_value;
-      //Serial.println(encoder_value);
-      //Serial.println(encoder_value + step);
       evolParams.Vol = encoder_value;
       out_volume(hpLastState);
       setVolumeToEvol();
@@ -154,7 +163,7 @@ void loop() {
       DrawMenu();
     }
     else if (fmenu && fparam) {
-      if (mi == MenuLength-1 && encoder_value < 1) { encoder_value = 1; }
+      if (mi == MenuLength-1 && encoder_value < 0) { encoder_value = 0; }
       evolParams.evolMenu[mi].value = encoder_value;
       DrawMenu();  
       setVolumeToEvol();
@@ -216,7 +225,6 @@ void readEncoder() {
 
 void processEncoderRotation (bool Up) {
   encoder_value = encoder_value + (Up ? 1 : -1);
-  //Serial.println(encoder_value);
 }
 
 void sendVolumeToEvol(uint8_t values[], int size) {
@@ -377,4 +385,30 @@ void pressHandler (BfButton *btn, BfButton::press_pattern_t pattern) {
       }            
       break;      
   }
+}
+
+void rotatySpeed(){ // acceleration for rotary )
+  unsigned long millisAfterLastMotion = millis() - lastMovementAt;
+  if (millisAfterLastMotion < accelerationLongCutoffMillis) {
+    if (millisAfterLastMotion < accelerationShortCutffMillis) {
+			millisAfterLastMotion = accelerationShortCutffMillis; // limit to maximum acceleration
+		}
+		if (currentDirection > 0) {
+      encoder_value += rotaryAccelerationCoef / millisAfterLastMotion;
+		}
+		else {
+		  encoder_value -= rotaryAccelerationCoef / millisAfterLastMotion;
+		}
+    encoder_value = max(min(encoder_value, POSITIVE_ENCODER_LIMIT), NEGATIVE_ENCODER_LIMIT);
+  } 
+}
+
+void rotaryStep(){
+  if (currentDirection > 0) {
+    delta = (evolParams.evolMenu[MenuLength-1].value-1);
+  }
+  else {
+    delta = (evolParams.evolMenu[MenuLength-1].value-1) * -1;
+  }
+  encoder_value = max(min(encoder_value+delta, POSITIVE_ENCODER_LIMIT), NEGATIVE_ENCODER_LIMIT);  
 }
